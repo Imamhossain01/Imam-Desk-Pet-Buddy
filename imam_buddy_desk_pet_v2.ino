@@ -1,6 +1,6 @@
 /*
  * ============================================================================
- *  IMAM BUDDY v3.3 - Interactive OLED Desk Pet  (NodeMCU V3 / ESP8266)
+ *  IMAM BUDDY v3.4 - Low Power Smart Sleep Edition (ESP8266)
  * ============================================================================
  *  Wiring:
  *    OLED SDA -> D2 (GPIO4)      OLED SCL -> D1 (GPIO5)    (addr 0x3C)
@@ -17,9 +17,9 @@
  * ============================================================================
  */
 
-#define BLYNK_TEMPLATE_ID    "****************"
+#define BLYNK_TEMPLATE_ID    "TMPL6gBnqXvGj"
 #define BLYNK_TEMPLATE_NAME "Imam Buddy"
-#define BLYNK_AUTH_TOKEN    "**********************"
+#define BLYNK_AUTH_TOKEN    "PqAVyR_e80ZggsUyAUalvXLkNRq3N5qT"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
@@ -31,9 +31,13 @@
 #include <Adafruit_SSD1306.h>
 #include <NTPClient.h>
 
+extern "C" {
+  #include "user_interface.h"
+}
+
 // ----------------------------- User Settings --------------------------------
-const char* WIFI_SSID = "*********";
-const char* WIFI_PASS = "**********";
+const char* WIFI_SSID = "IMAM";
+const char* WIFI_PASS = "imam121#";
 #define WEATHER_CITY  "Chattogram"
 
 // ----------------------------- Hardware Pins --------------------------------
@@ -56,6 +60,7 @@ const uint32_t STANDBY_DATE_MS    = 3000;
 const uint32_t STANDBY_WEATHER_MS = 3000;                
 const uint32_t INTERACT_WINDOW    = 10000;               
 const uint32_t MSG_READ_WINDOW    = 30000;               
+const uint32_t SLEEP_DISP_OFF_MS  = 10000; // Display off 10s after sleep
 const uint32_t FRAME_MS           = 50;                  
 
 const uint32_t GESTURE_GAP_MS     = 400;                 
@@ -91,7 +96,7 @@ const Note MEL_WAKE[]       = { {523,80},{659,80},{784,140} };
 // ----------------------------- Global Objects -------------------------------
 Adafruit_SSD1306 display(OLED_W, OLED_H, &Wire, -1);
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 21600, 60000); // UTC+6 for Bangladesh
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 21600, 60000); // UTC+6
 
 // ----------------------------- State Variables ------------------------------
 Mood     mood        = MOOD_CRY;
@@ -99,9 +104,11 @@ uint32_t lastDecayMs = 0;
 uint32_t lastTouchMs = 0;
 bool     hasTouched  = false;
 bool     sleeping    = false;
+uint32_t sleepStartMs = 0;
+bool     displayIsOn = true;
 
 // Alarm System State
-int      alarmTimeMinutes = -1; // -1 means OFF, 0..1439 = minute of day
+int      alarmTimeMinutes = -1; 
 bool     alarmTriggered   = false;
 int      lastAlarmDay     = -1;
 
@@ -172,6 +179,20 @@ void cancelEffect();
 void parseWeather(String s);
 void startMelody(const Note* m, uint8_t n, bool loop);
 void stopMelodyIf(const Note* m);
+void setDisplayPower(bool turnOn);
+
+// ============================================================================
+//  DISPLAY POWER CONTROL
+// ============================================================================
+void setDisplayPower(bool turnOn) {
+  if (displayIsOn == turnOn) return;
+  displayIsOn = turnOn;
+  if (turnOn) {
+    display.ssd1306_command(SSD1306_DISPLAYON);
+  } else {
+    display.ssd1306_command(SSD1306_DISPLAYOFF);
+  }
+}
 
 // ============================================================================
 //  BLYNK HANDLERS
@@ -195,6 +216,7 @@ BLYNK_WRITE(V0) {
 
   uint32_t now = millis();
   if (sleeping) wakeUp(now, false);
+  setDisplayPower(true);
   cancelEffect();
 
   msg          = s;
@@ -413,6 +435,8 @@ void onTouchPress(uint32_t now) {
   pressStartMs = now;
   longFired = false;
 
+  setDisplayPower(true);
+
   if (alarmTriggered) {
     alarmTriggered = false;
     alertT0 = 0;
@@ -420,7 +444,10 @@ void onTouchPress(uint32_t now) {
     return;
   }
 
-  if (sleeping) return;
+  if (sleeping) {
+    wakeUp(now, true);
+    return;
+  }
 
   if (tapCount > 0 && (now - lastTapPressMs) > GESTURE_GAP_MS) resolveGestures(now);
   lastTapPressMs = now;
@@ -451,8 +478,8 @@ void serviceGestures(uint32_t now) {
 //  SLEEP / WAKE & EFFECTS
 // ============================================================================
 void goToSleep(uint32_t now) {
-  (void)now;
   sleeping = true;
+  sleepStartMs = now;
   cancelEffect();
   melPtr = nullptr;
   tapCount = 0;
@@ -467,6 +494,7 @@ void wakeUp(uint32_t now, bool withEffect) {
   sleeping = false;
   lastDecayMs = now;
   moodSynced = false;
+  setDisplayPower(true);
   if (withEffect) {
     hasTouched = true;
     lastTouchMs = now;
@@ -509,12 +537,13 @@ void serviceAlarm(uint32_t now) {
       alertT0 = now;
       lastAlarmDay = currentDay;
       if (sleeping) wakeUp(now, false);
+      setDisplayPower(true);
     }
   }
 }
 
 // ============================================================================
-//  AUTO WEATHER FETCH (Ultra Lightweight & Reliable wttr.in Service)
+//  AUTO WEATHER FETCH (wttr.in)
 // ============================================================================
 void parseWeather(String s) {
   s.trim();
@@ -537,8 +566,6 @@ void fetchLiveWeather(uint32_t now) {
   
   WiFiClient client;
   HTTPClient http;
-  
-  // Format: "+28°C+Partly+Cloudy"
   String url = "http://wttr.in/Chattogram?format=%t+%C";
   
   if (http.begin(client, url)) {
@@ -548,7 +575,7 @@ void fetchLiveWeather(uint32_t now) {
       String payload = http.getString();
       payload.trim();
       payload.replace("+", "");
-      payload.replace("°", ""); // Clean special degree char
+      payload.replace("°", "");
       
       if (payload.length() > 0 && payload.length() < 30) {
         int spaceIdx = payload.indexOf(' ');
@@ -568,12 +595,12 @@ void fetchLiveWeather(uint32_t now) {
         else weatherIcon = WI_SUN;
         
         weatherValid = true;
-        weatherSynced = false; // Trigger Blynk V3 Sync
+        weatherSynced = false;
       }
     }
     http.end();
   }
-  weatherNextFetchMs = now + 900000UL; // Auto Fetch Every 15 Mins
+  weatherNextFetchMs = now + 900000UL;
 }
 
 void serviceWeatherSync(uint32_t now) {
@@ -1035,6 +1062,16 @@ void drawEffect(uint32_t now) {
 //  DISPLAY SERVICE
 // ============================================================================
 void serviceDisplay(uint32_t now) {
+  if (sleeping) {
+    if (now - sleepStartMs >= SLEEP_DISP_OFF_MS) {
+      setDisplayPower(false);
+      return;
+    }
+  } else {
+    setDisplayPower(true);
+  }
+
+  if (!displayIsOn) return;
   if (now - lastFrameMs < FRAME_MS) return;
   lastFrameMs = now;
 
@@ -1082,6 +1119,9 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
+  // Set Light Sleep for ESP8266 Modem
+  wifi_set_sleep_type(LIGHT_SLEEP_T);
+
   Wire.begin(PIN_SDA, PIN_SCL);
   Wire.setClock(400000);
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
@@ -1126,4 +1166,9 @@ void loop() {
   serviceBuzzer(now);
   serviceBlynkOut(now);
   serviceDisplay(now);
+
+  // Power Saving Delay during Display-OFF period
+  if (sleeping && !displayIsOn) {
+    delay(20);
+  }
 }
