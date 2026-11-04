@@ -1,6 +1,6 @@
 /*
  * ============================================================================
- *  IMAM BUDDY v3.3 - Interactive OLED Desk Pet  (NodeMCU V3 / ESP8266)
+ *  IMAM BUDDY v5 - Interactive OLED Desk Pet  (NodeMCU V3 / ESP8266)
  * ============================================================================
  *  Wiring:
  *    OLED SDA -> D2 (GPIO4)      OLED SCL -> D1 (GPIO5)    (addr 0x3C)
