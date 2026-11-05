@@ -51,9 +51,9 @@
  * ============================================================================
  */
 
-#define BLYNK_TEMPLATE_ID    "TMPL6gBnqXvGj"
+#define BLYNK_TEMPLATE_ID    "***************************"
 #define BLYNK_TEMPLATE_NAME  "Imam Buddy"
-#define BLYNK_AUTH_TOKEN     "PqAVyR_e80ZggsUyAUalvXLkNRq3N5qT"
+#define BLYNK_AUTH_TOKEN     "***************************"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
@@ -68,8 +68,8 @@
 #include <NTPClient.h>
 
 // ----------------------------- User Settings --------------------------------
-const char* WIFI_SSID = "IMAM";
-const char* WIFI_PASS = "imam121#";
+const char* WIFI_SSID = "**************************";
+const char* WIFI_PASS = "**************************";
 
 // ----------------------------- Hardware Pins --------------------------------
 #define OLED_W           128
