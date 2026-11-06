@@ -50,10 +50,18 @@
  *  Do NOT touch the wires while the pet boots (touch calibration).
  * ============================================================================
  */
+ */*
+ * ============================================================================
+ *  IMAM BUDDY v7.3 - SOS Panic + WiFi Repeater + Status Icon (ESP8266)
+ * ============================================================================
+ *  Board: "NodeMCU 1.0 (ESP-12E Module)"  (ESP8266 core 3.x)
+ *  Tools -> lwIP Variant: "v2 Lower Memory" (default) or "v2 Higher Bandwidth"
+ * ============================================================================
+ */
 
-#define BLYNK_TEMPLATE_ID    "***************************"
+#define BLYNK_TEMPLATE_ID    "TMPL6gBnqXvGj"
 #define BLYNK_TEMPLATE_NAME  "Imam Buddy"
-#define BLYNK_AUTH_TOKEN     "***************************"
+#define BLYNK_AUTH_TOKEN     "PqAVyR_e80ZggsUyAUalvXLkNRq3N5qT"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
@@ -67,9 +75,31 @@
 #include <Adafruit_SSD1306.h>
 #include <NTPClient.h>
 
+extern "C" {
+  #include "user_interface.h"
+  #include "lwip/ip_addr.h"
+}
+
+// Low-level DHCP C-SDK binding for ESP8266 Core 3.x
+extern "C" void dhcps_set_dns(uint8_t num, ip_addr_t *dnsserver) __attribute__((weak));
+
+// NAPT (only in lwIP variants "with features"; default variant has it)
+#if LWIP_FEATURES
+  #include <lwip/napt.h>
+  #include <lwip/dns.h>
+  #define HAVE_NAPT 1
+#else
+  #define HAVE_NAPT 0
+#endif
+
 // ----------------------------- User Settings --------------------------------
-const char* WIFI_SSID = "**************************";
-const char* WIFI_PASS = "**************************";
+const char* WIFI_SSID = "IMAM";
+const char* WIFI_PASS = "imam121#";
+
+#define AP_SSID          "Buddy"      // repeater network name (password = WIFI_PASS)
+#define AP_MAX_CLIENTS   4
+#define NAPT_ENTRIES     200          // small table keeps heap use low
+#define NAPT_PORTMAPS    4
 
 // ----------------------------- Hardware Pins --------------------------------
 #define OLED_W           128
@@ -78,12 +108,12 @@ const char* WIFI_PASS = "**************************";
 #define PIN_SDA          4      // D2
 #define PIN_SCL          5      // D1
 #define TOUCH_PIN_HEAD   14     // D5
-#define TOUCH_PIN_LEFT   13     // D7  (swapped)
-#define TOUCH_PIN_RIGHT  12     // D6  (swapped)
+#define TOUCH_PIN_LEFT   13     // D7
+#define TOUCH_PIN_RIGHT  12     // D6
 #define BUZZER_PIN       16     // D0
 
-#define BUZZER_PASSIVE   true   // true = passive buzzer (timer square wave), false = active (on/off)
-#define ALERT_FREQ       2700   // Hz - typical resonant frequency of small piezo/passive buzzers
+#define BUZZER_PASSIVE   true   // true = passive buzzer, false = active
+#define ALERT_FREQ       2700   // Hz
 
 // ----------------------------- Channels -------------------------------------
 #define CH_HEAD   0
@@ -99,15 +129,15 @@ const uint32_t STANDBY_DATE_MS    = 3000;
 const uint32_t STANDBY_WEATHER_MS = 3000;
 const uint32_t INTERACT_WINDOW    = 10000;
 const uint32_t MSG_READ_WINDOW    = 30000;
-const uint32_t SLEEP_DISP_OFF_MS  = 10000;   // manual sleep: OLED off after 10 s
-const uint32_t AUTO_SLEEP_OFF_MS  = 1500;    // idle timeout sleep: OLED off after 1.5 s
+const uint32_t SLEEP_DISP_OFF_MS  = 10000;
+const uint32_t AUTO_SLEEP_OFF_MS  = 1500;
 const uint32_t FRAME_MS           = 50;
-const uint32_t ALARM_MAX_MS       = 120000;  // alarm silences itself after 2 min
+const uint32_t ALARM_MAX_MS       = 120000;
 
 const uint32_t GESTURE_GAP_MS     = 400;
-const uint32_t LONG_PRESS_MS      = 2500;    // head hold -> sleep
-const uint32_t MENU_HOLD_MS       = 2000;    // cheek hold -> menu open/close
-const uint32_t PINCH_WINDOW_MS    = 600;     // both cheeks within this = pinch
+const uint32_t LONG_PRESS_MS      = 2500;
+const uint32_t MENU_HOLD_MS       = 2000;
+const uint32_t PINCH_WINDOW_MS    = 600;
 const uint32_t MENU_TIMEOUT_MS    = 30000;
 const uint32_t FX_TRICK_MS        = 3000;
 const uint32_t FX_SCARED_MS       = 3000;
@@ -115,10 +145,18 @@ const uint32_t FX_WAKE_MS         = 2500;
 const uint32_t FX_SLAP_MS         = 2600;
 const uint32_t FX_PINCH_MS        = 3500;
 
+// SOS
+const uint32_t SOS_WINDOW_MS      = 300;
+const uint32_t SOS_ACK_GUARD_MS   = 2000;
+const uint32_t SOS_SIREN_MAX_MS   = 5UL * 60UL * 1000UL;
+const uint32_t SOS_RESEND_MS      = 60000;
+const uint32_t SOS_PENDING_MAX_MS = 10UL * 60UL * 1000UL;
+const uint32_t SOS_RETRY_MS       = 3000;
+
 const uint32_t WEATHER_OK_INTERVAL   = 15UL * 60UL * 1000UL;
 const uint32_t WEATHER_STALE_MS      = 3UL * 60UL * 60UL * 1000UL;
 
-const uint32_t SLEEP_OPTS_MS[4]   = { 900000UL, 1800000UL, 3600000UL, 0UL };  // 15m 30m 1h OFF
+const uint32_t SLEEP_OPTS_MS[4]   = { 900000UL, 1800000UL, 3600000UL, 0UL };
 
 // ----------------------------- Touch Tuning ---------------------------------
 #define TOUCH_SAMPLES          16
@@ -133,7 +171,7 @@ const uint32_t TOUCH_MIN_DELTA = 120;
 // ----------------------------- Types ----------------------------------------
 enum Mood : uint8_t { MOOD_CRY = 0, MOOD_SAD = 1, MOOD_NORMAL = 2, MOOD_HAPPY = 3 };
 enum DispMode : uint8_t { DM_STANDBY, DM_INTERACT, DM_MESSAGE, DM_FX, DM_SLEEP, DM_ALARM, DM_MENU };
-enum FxMode : uint8_t { FX_NONE, FX_TRICK, FX_SCARED, FX_WAKE, FX_SLAP, FX_PINCH };
+enum FxMode : uint8_t { FX_NONE, FX_TRICK, FX_SCARED, FX_WAKE, FX_SLAP, FX_PINCH, FX_SOS };
 enum WeatherIcon : uint8_t { WI_SUN, WI_PARTLY, WI_CLOUD, WI_RAIN, WI_STORM };
 struct Note { uint16_t f; uint16_t d; };
 struct TouchCh {
@@ -142,12 +180,10 @@ struct TouchCh {
   uint8_t  above, below;
   bool     phys, virt, active, longFired;
 };
-struct CityRec { char n[13]; int16_t la; int16_t lo; };   // lat/lon x100
+struct CityRec { char n[13]; int16_t la; int16_t lo; };
 
 const char* const DAYS_OF_WEEK[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
-// ----------------------------- Cities (flash) -------------------------------
-// The 8 administrative divisions of Bangladesh
 const CityRec CITIES[] PROGMEM = {
   {"Chattogram", 2234, 9183},
   {"Dhaka",      2381, 9041},
@@ -166,31 +202,28 @@ const Note MEL_SCARED[] = { {2200,50},{1400,50},{2200,50},{1400,50},{2200,50},{1
 const Note MEL_WAKE[]   = { {523,80},{659,80},{784,140} };
 const Note MEL_PINCH[]  = { {1319,70},{1568,70},{2093,70},{2637,70},{0,40},
                             {2093,70},{2637,70},{3136,200} };
-// SLAP: rising "whoosh" (~210 ms, matches hand approach) -> noisy WHACK crack
-//       (rapid alternating high/low bursts) -> descending cartoon "owww" slide
 const Note MEL_SLAP[]   = { {400,30},{650,30},{900,30},{1250,30},{1650,30},{2100,30},{2600,30},
                             {4000,14},{1100,14},{3600,14},{800,14},{3000,14},{600,16},{2500,16},{0,30},
                             {1600,30},{1350,30},{1100,30},{900,35},{700,40},{520,50},{380,70},{0,40} };
 #define NOTES(a) ((uint8_t)(sizeof(a) / sizeof(a[0])))
 
-// Beep volume -> duty cycle % (fixed period => fixed pitch).
-// Chosen so fundamental amplitude is linear in level: sin(pi*d) = level/5
 const uint8_t VOL_DUTY_PCT[5] = { 6, 13, 20, 30, 50 };
-#define BZ_TIMER_HZ  5000000UL      // Timer1 at 80 MHz / 16 = 5 MHz
+#define BZ_TIMER_HZ  5000000UL
 
 // ----------------------------- Global Objects -------------------------------
 Adafruit_SSD1306 display(OLED_W, OLED_H, &Wire, -1);
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 21600, 60000);   // UTC+6
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 21600, 60000);
 
 // ----------------------------- Persistent Settings --------------------------
-#define EE_MAGIC 0xB8               // bumped: city list changed (old saved indices invalid)
+#define EE_MAGIC 0xB9
 uint8_t  cityIdx      = 0;
-uint8_t  sleepOpt     = 2;       // 0=15m 1=30m 2=1h 3=OFF
-uint8_t  volume       = 5;       // 1..5
-uint8_t  moodLock     = 0;       // 0=auto, 1..4 = locked CRY..HAPPY
+uint8_t  sleepOpt     = 2;
+uint8_t  volume       = 5;
+uint8_t  moodLock     = 0;
 bool     alarmEnabled = false;
 uint16_t alarmMin     = 7 * 60 + 30;
+bool     repeaterEnabled = false;
 char     cityName[13];
 bool     settingsDirty = false;
 uint32_t settingsDirtyMs = 0;
@@ -199,7 +232,7 @@ uint32_t settingsDirtyMs = 0;
 Mood     mood         = MOOD_CRY;
 uint32_t lastDecayMs  = 0;
 uint32_t lastTouchMs  = 0;
-uint32_t lastActivityMs = 0;     // for idle auto-sleep
+uint32_t lastActivityMs = 0;
 bool     hasTouched   = false;
 bool     sleeping     = false;
 uint32_t sleepStartMs = 0;
@@ -211,12 +244,29 @@ bool     alarmTriggered = false;
 uint32_t alarmStartMs   = 0;
 int      lastAlarmDay   = -1;
 
+// SOS
+bool     sosActive      = false;
+bool     sosPending     = false;
+bool     sosSent        = false;
+bool     sosEverSent    = false;
+uint32_t sosT0          = 0;
+uint32_t sosTriggerMs   = 0;
+uint32_t sosNextTryMs   = 0;
+uint32_t lastSosSendMs  = 0;
+
+// WiFi repeater
+bool      repeaterUp      = false;
+bool      repeaterNoNapt  = false;
+bool      naptInited      = false;
+uint32_t  repeaterNextMs  = 0;
+IPAddress repeaterStaIp;
+
 // Effects
 FxMode      fxMode       = FX_NONE;
 uint32_t    fxStartMs    = 0;
 uint32_t    fxDurationMs = 0;
 const Note* fxMelody     = nullptr;
-uint8_t     fxSide       = CH_LEFT;   // which cheek was slapped
+uint8_t     fxSide       = CH_LEFT;
 
 // Message
 String   msg;
@@ -268,13 +318,13 @@ uint8_t  headTaps         = 0;
 uint32_t headLastPress    = 0;
 
 // Menu
-#define MENU_ITEMS 5
-enum { MI_ALARM = 0, MI_CITY, MI_SLEEP, MI_MOOD, MI_VOL };
+#define MENU_ITEMS 6
+enum { MI_ALARM = 0, MI_CITY, MI_SLEEP, MI_MOOD, MI_VOL, MI_REPEATER };
 bool     menuActive = false, menuEdit = false;
 uint8_t  menuIdx = 0, menuField = 0;
 uint32_t menuLastInputMs = 0;
 uint8_t  wCity, wSleep, wMood, wVol, wH12, wM;
-bool     wAlarmOn, wPM;
+bool     wAlarmOn, wPM, wRepeater;
 uint32_t lastAdjustMs = 0;
 int8_t   lastAdjustDir = 0;
 const char* const SLEEP_LABELS[4] = { "15 min", "30 min", "1 hour", "OFF" };
@@ -304,6 +354,8 @@ void closeMenu(uint32_t now);
 void markSettingsDirty(uint32_t now);
 void saveSettings();
 void stopAlarm();
+void triggerSos(uint32_t now);
+void endSos(uint32_t now);
 
 // ============================================================================
 //  SETTINGS (EEPROM)
@@ -331,6 +383,7 @@ void loadSettings() {
     moodLock     = EEPROM.read(4);
     alarmEnabled = EEPROM.read(5) != 0;
     alarmMin     = EEPROM.read(6) | ((uint16_t)EEPROM.read(7) << 8);
+    repeaterEnabled = EEPROM.read(8) != 0;
     if (cityIdx >= NUM_CITIES)       cityIdx = 0;
     if (sleepOpt > 3)                sleepOpt = 2;
     if (volume < 1 || volume > 5)    volume = 5;
@@ -350,6 +403,7 @@ void saveSettings() {
   EEPROM.write(5, alarmEnabled ? 1 : 0);
   EEPROM.write(6, alarmMin & 0xFF);
   EEPROM.write(7, alarmMin >> 8);
+  EEPROM.write(8, repeaterEnabled ? 1 : 0);
   EEPROM.commit();
   settingsDirty = false;
 }
@@ -360,7 +414,7 @@ void markSettingsDirty(uint32_t now) {
 }
 
 void serviceSettings(uint32_t now) {
-  if (settingsDirty && (now - settingsDirtyMs) > 2000) saveSettings();   // batch flash writes
+  if (settingsDirty && (now - settingsDirtyMs) > 2000) saveSettings();
 }
 
 void formatAlarm(char* buf, size_t n) {
@@ -388,8 +442,7 @@ BLYNK_CONNECTED() {
   dateSynced = false;
   moodSynced = false;
   weatherSynced = false;
-  alarmSynced = false;     // device is the source of truth for the alarm (EEPROM)
-  // NOTE: V3 is deliberately NOT synced here - a stored old value would show stale weather.
+  alarmSynced = false;
 }
 
 BLYNK_WRITE(V0) {
@@ -419,7 +472,7 @@ BLYNK_WRITE(V0) {
 }
 
 BLYNK_WRITE(V3) {
-  parseWeather(String(param.asStr()));     // manual push, replaced at next live update
+  parseWeather(String(param.asStr()));
 }
 
 BLYNK_WRITE(V4) {
@@ -439,7 +492,7 @@ BLYNK_WRITE(V4) {
     alarmEnabled = false;
   }
   lastAlarmDay = -1;
-  alarmSynced = false;               // write back the normalized "07:30 AM" / "OFF" text
+  alarmSynced = false;
   markSettingsDirty(millis());
 }
 
@@ -449,9 +502,6 @@ BLYNK_WRITE(V8) { setChannel(CH_RIGHT, tch[CH_RIGHT].phys, param.asInt() != 0, m
 
 // ============================================================================
 //  BUZZER & MELODY ENGINE
-//  GPIO16 has no hardware PWM / tone(). Timer1 ISR generates a square wave:
-//    period (pitch)  = fixed by note frequency
-//    high-time       = period * duty%   (this alone sets the volume)
 // ============================================================================
 void IRAM_ATTR bzISR() {
   if (bzPhaseHigh) {
@@ -465,7 +515,6 @@ void IRAM_ATTR bzISR() {
   }
 }
 
-// loud = true forces maximum volume (alerts / alarm must always be heard)
 void buzzerTone(uint16_t f, bool loud = false) {
   uint8_t vol = loud ? 5 : volume;
   if (f == curFreq && vol == curVol) return;
@@ -485,7 +534,7 @@ void buzzerTone(uint16_t f, bool loud = false) {
 
   uint32_t period = BZ_TIMER_HZ / f;
   uint32_t hi = (period * VOL_DUTY_PCT[vol - 1]) / 100UL;
-  if (hi < 30) hi = 30;                         // keep ISR safely re-armable
+  if (hi < 30) hi = 30;
   uint32_t lo = (period > hi) ? (period - hi) : 30;
   if (lo < 30) lo = 30;
 
@@ -528,13 +577,22 @@ void chirpForMood() {
 }
 
 void serviceBuzzer(uint32_t now) {
+  if (sosActive) {
+    if ((now - sosT0) < SOS_SIREN_MAX_MS) {
+      uint32_t ph  = (now - sosT0) % 1200;
+      uint32_t tri = (ph < 600) ? ph : (1200 - ph);
+      buzzerTone((uint16_t)(1400 + tri * 3), true);
+    } else {
+      buzzerTone(0);
+    }
+    return;
+  }
   if ((msgActive && msgUnread) || alarmTriggered) {
     uint8_t slot = ((now - alertT0) / 100) % 8;
     buzzerTone((slot == 0 || slot == 2 || slot == 4) ? ALERT_FREQ : 0, true);
     return;
   }
   if (melPtr) {
-    // catch-up loop keeps melody tempo accurate even if a display frame blocked the loop
     while (melPtr && (int32_t)(now - melNoteEnd) >= 0) {
       melIdx++;
       if (melIdx >= melLen) {
@@ -550,7 +608,7 @@ void serviceBuzzer(uint32_t now) {
 }
 
 // ============================================================================
-//  TOUCH SENSING  (3 single-wire charge-time channels, non-blocking)
+//  TOUCH SENSING
 // ============================================================================
 uint32_t touchSample(uint8_t pin) {
   uint32_t sum = 0;
@@ -588,7 +646,6 @@ void calibrateTouch() {
   }
 }
 
-// Combines physical + virtual (Blynk) state and fires press/release events.
 void setChannel(uint8_t c, bool newPhys, bool newVirt, uint32_t now) {
   TouchCh &t = tch[c];
   bool before = t.active;
@@ -630,14 +687,13 @@ void serviceTouch(uint32_t now) {
       } else {
         t.below = 0;
       }
-      if (t.phys && (now - t.pressStart) > TOUCH_STUCK_MS) {   // stuck sensor: re-learn
+      if (t.phys && (now - t.pressStart) > TOUCH_STUCK_MS) {
         t.baseline = (float)raw;
         t.longFired = true;
         t.below = 0;
         setChannel(c, false, t.virt, now);
       }
     }
-    // virtual press never released (button not in PUSH mode) -> auto release
     if (t.virt && !t.phys && (now - t.pressStart) > VIRT_STUCK_MS) {
       t.longFired = true;
       setChannel(c, t.phys, false, now);
@@ -680,7 +736,7 @@ void onRapidTap(uint32_t now)  { markInteraction(now); startEffect(FX_SCARED, no
 
 void onCheekTap(uint8_t c, uint32_t now) {
   markInteraction(now);
-  fxSide = c;                        // remembers which cheek got slapped
+  fxSide = c;
   startEffect(FX_SLAP, now);
 }
 
@@ -700,11 +756,83 @@ void resolveHeadGesture(uint32_t now) {
 }
 
 // ============================================================================
+//  SOS PANIC ALERT
+// ============================================================================
+bool sosTripleDetected(uint32_t now) {
+  uint32_t oldest = now;
+  for (uint8_t c = 0; c < NUM_CH; c++) {
+    if (!tch[c].active) return false;
+    if ((int32_t)(tch[c].pressStart - oldest) < 0) oldest = tch[c].pressStart;
+  }
+  return (now - oldest) <= SOS_WINDOW_MS;
+}
+
+void triggerSos(uint32_t now) {
+  if (menuActive) closeMenu(now);
+  stopAlarm();
+  if (sleeping) wakeUp(now, false);
+  setDisplayPower(true);
+  headTaps = 0;
+  melPtr = nullptr;
+  cancelEffect();
+
+  for (uint8_t c = 0; c < NUM_CH; c++) tch[c].longFired = true;
+
+  sosActive      = true;
+  sosT0          = now;
+  sosTriggerMs   = now;
+  fxMode         = FX_SOS;
+  fxStartMs      = now;
+  fxDurationMs   = 0;
+  hasTouched     = true;
+  lastTouchMs    = now;
+  lastDecayMs    = now;
+  lastActivityMs = now;
+  moodSynced     = false;
+
+  if (sosEverSent && (now - lastSosSendMs) < SOS_RESEND_MS) {
+    sosSent = true;
+  } else {
+    sosSent      = false;
+    sosPending   = true;
+    sosNextTryMs = now;
+  }
+}
+
+void endSos(uint32_t now) {
+  sosActive = false;
+  fxMode = FX_NONE;
+  fxMelody = nullptr;
+  melPtr = nullptr;
+  hasTouched = true;
+  lastTouchMs = now;
+  lastDecayMs = now;
+  lastActivityMs = now;
+  moodSynced = false;
+  setDisplayPower(true);
+  menuBeep(1500);
+}
+
+void serviceSos(uint32_t now) {
+  if (!sosPending) return;
+  if ((now - sosTriggerMs) > SOS_PENDING_MAX_MS) { sosPending = false; return; }
+  if (!Blynk.connected() || (int32_t)(now - sosNextTryMs) < 0) return;
+
+  Blynk.logEvent("sos_alert", "Emergency Please Call Home");
+  sosPending    = false;
+  sosSent       = true;
+  sosEverSent   = true;
+  lastSosSendMs = now;
+  sosNextTryMs  = now + SOS_RETRY_MS;
+}
+
+// ============================================================================
 //  MENU
 // ============================================================================
 void loadWorking() {
   wCity = cityIdx; wSleep = sleepOpt; wMood = moodLock; wVol = volume;
   wAlarmOn = alarmEnabled;
+  wRepeater = repeaterEnabled;
   int h24 = alarmMin / 60;
   wPM = (h24 >= 12);
   wH12 = h24 % 12; if (wH12 == 0) wH12 = 12;
@@ -730,15 +858,14 @@ void closeMenu(uint32_t now) {
   menuBeep(1200);
 }
 
-// Writes the edited alarm to RAM + EEPROM immediately and queues the V4 push.
 void commitAlarm(uint32_t now) {
   (void)now;
   int h24 = (wH12 % 12) + (wPM ? 12 : 0);
   alarmMin = h24 * 60 + wM;
   alarmEnabled = wAlarmOn;
   lastAlarmDay = -1;
-  alarmSynced = false;               // push new alarm text to V4
-  saveSettings();                    // persist right away
+  alarmSynced = false;
+  saveSettings();
 }
 
 void menuAdjust(int8_t dir, uint32_t now) {
@@ -749,8 +876,8 @@ void menuAdjust(int8_t dir, uint32_t now) {
   switch (menuIdx) {
     case MI_ALARM:
       if (menuField == 0)      wAlarmOn = !wAlarmOn;
-      else if (menuField == 1) wH12 = ((wH12 - 1 + dir + 12) % 12) + 1;               // 1..12
-      else if (menuField == 2) { int step = fast ? 5 : 1; wM = (wM + dir * step + 60) % 60; }  // 00..59
+      else if (menuField == 1) wH12 = ((wH12 - 1 + dir + 12) % 12) + 1;
+      else if (menuField == 2) { int step = fast ? 5 : 1; wM = (wM + dir * step + 60) % 60; }
       else                     wPM = !wPM;
       break;
     case MI_CITY:  wCity  = (wCity + NUM_CITIES + dir) % NUM_CITIES; break;
@@ -763,8 +890,9 @@ void menuAdjust(int8_t dir, uint32_t now) {
       wVol = v;
       break;
     }
+    case MI_REPEATER: wRepeater = !wRepeater; break;
   }
-  if (menuIdx == MI_VOL) {                       // live preview at the chosen level
+  if (menuIdx == MI_VOL) {
     uint8_t keep = volume; volume = wVol;
     menuBeep(2000);
     volume = keep;
@@ -780,7 +908,7 @@ void menuMove(int8_t dir, uint32_t now) {
 }
 
 void menuHeadTap(uint32_t now) {
-  if (!menuEdit) {                               // enter edit of this item
+  if (!menuEdit) {
     loadWorking();
     menuEdit = true;
     menuField = 0;
@@ -789,14 +917,13 @@ void menuHeadTap(uint32_t now) {
   }
   switch (menuIdx) {
     case MI_ALARM:
-      // steps: 0 ON/OFF -> 1 hour -> 2 minute -> 3 AM/PM -> save
-      if (menuField == 0 && !wAlarmOn) { commitAlarm(now); menuEdit = false; }   // OFF: save right away
+      if (menuField == 0 && !wAlarmOn) { commitAlarm(now); menuEdit = false; }
       else if (++menuField > 3)        { commitAlarm(now); menuEdit = false; }
       break;
     case MI_CITY:
       cityIdx = wCity;
       cityNameOf(cityIdx, cityName);
-      weatherValid = false;                      // never show another city's data
+      weatherValid = false;
       weatherFails = 0;
       weatherNextFetchMs = now + 1500;
       markSettingsDirty(now);
@@ -819,6 +946,12 @@ void menuHeadTap(uint32_t now) {
       markSettingsDirty(now);
       menuEdit = false;
       break;
+    case MI_REPEATER:
+      repeaterEnabled = wRepeater;
+      repeaterNextMs = now;
+      saveSettings();
+      menuEdit = false;
+      break;
   }
   menuBeep(2400);
 }
@@ -832,12 +965,20 @@ void chPress(uint8_t c, uint32_t now) {
   t.longFired = false;
   lastActivityMs = now;
 
-  if (alarmTriggered) { stopAlarm(); t.longFired = true; return; }         // touch stops alarm
-  if (sleeping)       { wakeUp(now, true); t.longFired = true; return; }   // touch wakes pet
-  setDisplayPower(true);
-  if (menuActive)     { menuLastInputMs = now; return; }                   // handled on release
+  if (sosActive) {
+    t.longFired = true;
+    if ((now - sosT0) >= SOS_ACK_GUARD_MS) endSos(now);
+    return;
+  }
 
-  if (msgActive && msgUnread) readMessage(now);                            // instant silence + V1 OFF
+  if (sosTripleDetected(now)) { triggerSos(now); return; }
+
+  if (alarmTriggered) { stopAlarm(); t.longFired = true; return; }
+  if (sleeping)       { wakeUp(now, true); t.longFired = true; return; }
+  setDisplayPower(true);
+  if (menuActive)     { menuLastInputMs = now; return; }
+
+  if (msgActive && msgUnread) readMessage(now);
 
   if (c == CH_HEAD) {
     if (headTaps > 0 && (now - headLastPress) > GESTURE_GAP_MS) resolveHeadGesture(now);
@@ -845,7 +986,7 @@ void chPress(uint8_t c, uint32_t now) {
   } else {
     uint8_t o = (c == CH_LEFT) ? CH_RIGHT : CH_LEFT;
     if (tch[o].active && !tch[o].longFired && (now - tch[o].pressStart) <= PINCH_WINDOW_MS) {
-      tch[o].longFired = true;                                             // swallow both releases
+      tch[o].longFired = true;
       t.longFired = true;
       onPinch(now);
     }
@@ -875,27 +1016,22 @@ void chRelease(uint8_t c, uint32_t now) {
 void serviceGestures(uint32_t now) {
   TouchCh &h = tch[CH_HEAD];
 
-  // Head hold -> manual sleep
   if (h.active && !h.longFired && (now - h.pressStart) >= LONG_PRESS_MS) {
     h.longFired = true;
     headTaps = 0;
-    if (!menuActive && !sleeping) goToSleep(now, false);
+    if (!menuActive && !sleeping && !sosActive) goToSleep(now, false);
   }
 
-  // Cheek hold -> toggle menu
   for (uint8_t c = CH_LEFT; c <= CH_RIGHT; c++) {
     TouchCh &t = tch[c];
-    if (t.active && !t.longFired && !sleeping && (now - t.pressStart) >= MENU_HOLD_MS) {
+    if (t.active && !t.longFired && !sleeping && !sosActive && (now - t.pressStart) >= MENU_HOLD_MS) {
       t.longFired = true;
       if (menuActive) closeMenu(now);
       else            openMenu(now);
     }
   }
 
-  // Head tap group resolves after the gap
   if (!h.active && headTaps > 0 && (now - headLastPress) > GESTURE_GAP_MS) resolveHeadGesture(now);
-
-  // Menu inactivity timeout
   if (menuActive && (now - menuLastInputMs) > MENU_TIMEOUT_MS) closeMenu(now);
 }
 
@@ -903,6 +1039,7 @@ void serviceGestures(uint32_t now) {
 //  SLEEP / WAKE / AUTO SLEEP / EFFECTS
 // ============================================================================
 void goToSleep(uint32_t now, bool autoMode) {
+  if (sosActive) return;
   sleeping = true;
   sleepStartMs = now;
   sleepDispOffDelay = autoMode ? AUTO_SLEEP_OFF_MS : SLEEP_DISP_OFF_MS;
@@ -929,10 +1066,9 @@ void wakeUp(uint32_t now, bool withEffect) {
   }
 }
 
-// Idle timeout: Wi-Fi / NTP / Blynk keep running in loop(); only the pet + OLED sleep.
 void serviceAutoSleep(uint32_t now) {
   if (sleeping) return;
-  bool busy = alarmTriggered || menuActive || msgActive || fxMode != FX_NONE ||
+  bool busy = sosActive || alarmTriggered || menuActive || msgActive || fxMode != FX_NONE ||
               tch[CH_HEAD].active || tch[CH_LEFT].active || tch[CH_RIGHT].active;
   if (busy) { lastActivityMs = now; return; }
   uint32_t to = SLEEP_OPTS_MS[sleepOpt];
@@ -940,7 +1076,8 @@ void serviceAutoSleep(uint32_t now) {
 }
 
 void startEffect(FxMode fx, uint32_t now) {
-  uint8_t keepSide = fxSide;         // cancelEffect() must not lose the slap side
+  if (sosActive) return;
+  uint8_t keepSide = fxSide;
   cancelEffect();
   fxSide = keepSide;
   fxMode = fx;
@@ -956,13 +1093,14 @@ void startEffect(FxMode fx, uint32_t now) {
 }
 
 void cancelEffect() {
+  if (sosActive) return;
   stopMelodyIf(fxMelody);
   fxMelody = nullptr;
   fxMode = FX_NONE;
 }
 
 void serviceEffects(uint32_t now) {
-  if (fxMode != FX_NONE && (now - fxStartMs) >= fxDurationMs) cancelEffect();
+  if (fxMode != FX_NONE && fxMode != FX_SOS && (now - fxStartMs) >= fxDurationMs) cancelEffect();
 }
 
 // ============================================================================
@@ -971,7 +1109,7 @@ void serviceEffects(uint32_t now) {
 void serviceAlarm(uint32_t now) {
   if (alarmTriggered && (now - alarmStartMs) > ALARM_MAX_MS) stopAlarm();
 
-  if (timeClient.isTimeSet() && alarmEnabled) {
+  if (!sosActive && timeClient.isTimeSet() && alarmEnabled) {
     int currentMin = timeClient.getHours() * 60 + timeClient.getMinutes();
     int currentDay = timeClient.getDay();
     if (currentMin == (int)alarmMin && lastAlarmDay != currentDay) {
@@ -988,9 +1126,87 @@ void serviceAlarm(uint32_t now) {
 }
 
 // ============================================================================
-//  WEATHER  (Open-Meteo, plain HTTP first, HTTPS fallback, small JSON parse)
+//  WIFI REPEATER (SoftAP "Buddy" + Station, NAPT)
 // ============================================================================
-void parseWeather(String s) {       // manual text from V3 e.g. "28C Sunny"
+void applyApDns() {
+#if HAVE_NAPT
+  if (dhcps_set_dns != nullptr) {
+    ip_addr_t d1;
+    uint32_t dnsRaw = (uint32_t)WiFi.dnsIP(0);
+    ip4_addr_set_u32(ip_2_ip4(&d1), dnsRaw);
+    dhcps_set_dns(0, &d1);
+  }
+#endif
+}
+
+bool startRepeater() {
+#if !HAVE_NAPT
+  Serial.println(F("Repeater: this lwIP variant has no NAPT (pick a variant WITH features)"));
+  repeaterNoNapt = true;
+  return false;
+#else
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAPConfig(IPAddress(172, 30, 77, 1), IPAddress(172, 30, 77, 1), IPAddress(255, 255, 255, 0));
+  if (!WiFi.softAP(AP_SSID, WIFI_PASS, WiFi.channel(), false, AP_MAX_CLIENTS)) {
+    Serial.println(F("Repeater: softAP failed (WIFI_PASS must be 8..63 chars)"));
+    WiFi.mode(WIFI_STA);
+    return false;
+  }
+  applyApDns();
+  err_t r = ERR_OK;
+  if (!naptInited) {
+    r = ip_napt_init(NAPT_ENTRIES, NAPT_PORTMAPS);
+    if (r == ERR_OK) naptInited = true;
+  }
+  if (r == ERR_OK) r = ip_napt_enable_no(SOFTAP_IF, 1);
+  if (r != ERR_OK) {
+    Serial.println(F("Repeater: NAPT init failed (low heap?)"));
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    return false;
+  }
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  repeaterStaIp = WiFi.localIP();
+  repeaterUp = true;
+  Serial.printf("Repeater ON: SSID %s, heap %u\n", AP_SSID, (unsigned)ESP.getFreeHeap());
+  return true;
+#endif
+}
+
+void stopRepeater() {
+#if HAVE_NAPT
+  if (naptInited) ip_napt_enable_no(SOFTAP_IF, 0);
+#endif
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleepMode(WIFI_LIGHT_SLEEP);
+  repeaterUp = false;
+  Serial.println(F("Repeater OFF"));
+}
+
+void serviceRepeater(uint32_t now) {
+  if (repeaterEnabled) {
+    if (!repeaterUp) {
+      if (repeaterNoNapt) return;
+      if (WiFi.status() != WL_CONNECTED) return;
+      if ((int32_t)(now - repeaterNextMs) < 0) return;
+      if (!startRepeater()) repeaterNextMs = millis() + 30000UL;
+    } else {
+      if (WiFi.getSleepMode() != WIFI_NONE_SLEEP) WiFi.setSleepMode(WIFI_NONE_SLEEP);
+      if (WiFi.status() == WL_CONNECTED) {
+        IPAddress ip = WiFi.localIP();
+        if (ip != repeaterStaIp) { repeaterStaIp = ip; applyApDns(); }
+      }
+    }
+  } else if (repeaterUp) {
+    stopRepeater();
+  }
+}
+
+// ============================================================================
+//  WEATHER
+// ============================================================================
+void parseWeather(String s) {
   s.trim();
   s.replace('\n', ' ');
   s.replace('\r', ' ');
@@ -1054,8 +1270,6 @@ void applyWeather(int code, float tempC) {
   weatherIcon = ic;
 }
 
-// Response: {...,"current_units":{...},"current":{"time":..,"temperature_2m":28.5,"weather_code":3}}
-// We search INSIDE the "current" object, because current_units has the same keys with text values.
 bool parseOpenMeteo(const String& b, float& t, int& wc) {
   static const char K_CUR[]  = "\"current\":";
   static const char K_TEMP[] = "\"temperature_2m\":";
@@ -1070,12 +1284,11 @@ bool parseOpenMeteo(const String& b, float& t, int& wc) {
   return (t > -60.0f && t < 70.0f && wc >= 0 && wc <= 99);
 }
 
-// returns 1 = ok, 0 = failed, -1 = redirect/refused (worth trying HTTPS)
 int weatherDoRequest(WiFiClient& cl, const char* url) {
   HTTPClient http;
   http.setReuse(false);
   http.setTimeout(5000);
-  http.useHTTP10(true);                  // no chunked encoding, simple body
+  http.useHTTP10(true);
   int result = 0;
   if (http.begin(cl, url)) {
     int code = http.GET();
@@ -1103,9 +1316,9 @@ int weatherRequest(bool secure) {
     WiFiClient c;
     return weatherDoRequest(c, url);
   }
-  if (ESP.getMaxFreeBlockSize() < 20000) return 0;       // TLS needs a big contiguous block
+  if (ESP.getMaxFreeBlockSize() < 20000) return 0;
   BearSSL::WiFiClientSecure c;
-  c.setInsecure();                                       // no cert pinning (weather only)
+  c.setInsecure();
   return weatherDoRequest(c, url);
 }
 
@@ -1123,12 +1336,11 @@ bool fetchLiveWeather() {
 }
 
 void serviceWeatherSync(uint32_t now) {
-  if (weatherValid && (now - weatherOkMs) > WEATHER_STALE_MS) weatherValid = false;   // never show stale data
+  if (weatherValid && (now - weatherOkMs) > WEATHER_STALE_MS) weatherValid = false;
   if (WiFi.status() != WL_CONNECTED) return;
   if ((int32_t)(now - weatherNextFetchMs) < 0) return;
 
-  // do not block (up to a few seconds) while the user is interacting
-  bool busy = menuActive || alarmTriggered || (msgActive && msgUnread) || fxMode != FX_NONE ||
+  bool busy = sosActive || menuActive || alarmTriggered || (msgActive && msgUnread) || fxMode != FX_NONE ||
               tch[CH_HEAD].active || tch[CH_LEFT].active || tch[CH_RIGHT].active;
   if (busy) { weatherNextFetchMs = now + 3000; return; }
 
@@ -1136,11 +1348,11 @@ void serviceWeatherSync(uint32_t now) {
     weatherValid = true;
     weatherOkMs = millis();
     weatherFails = 0;
-    weatherSynced = false;                       // push "28C Clear" to V3
+    weatherSynced = false;
     weatherNextFetchMs = millis() + WEATHER_OK_INTERVAL;
   } else {
     if (weatherFails < 250) weatherFails++;
-    weatherNextFetchMs = millis() + (weatherFails < 3 ? 60000UL : 300000UL);   // retry 1 min, then 5 min
+    weatherNextFetchMs = millis() + (weatherFails < 3 ? 60000UL : 300000UL);
   }
 }
 
@@ -1166,7 +1378,6 @@ void getDateStr(char* buf, size_t n) {
   snprintf(buf, n, "%02d/%02d/%04lu", (int)(days + 1), (int)(m + 1), (unsigned long)y);
 }
 
-// Night = 18:00 .. 05:59 (NTP local time). Before NTP is set -> treated as day.
 bool isNightNow() {
   if (!timeClient.isTimeSet()) return false;
   int h = timeClient.getHours();
@@ -1177,7 +1388,7 @@ bool isNightNow() {
 //  SERVICES
 // ============================================================================
 void serviceMood(uint32_t now) {
-  if (sleeping || moodLock) { lastDecayMs = now; return; }
+  if (sleeping || moodLock || sosActive) { lastDecayMs = now; return; }
   if (mood > MOOD_CRY && (now - lastDecayMs) >= MOOD_DECAY_MS) {
     mood = (Mood)(mood - 1);
     lastDecayMs = now;
@@ -1219,7 +1430,8 @@ void serviceBlynkOut(uint32_t now) {
   }
   if (!moodSynced) {
     const char* m = "CRY";
-    if (sleeping)                 m = "SLEEPING";
+    if (sosActive)                m = "SOS";
+    else if (sleeping)            m = "SLEEPING";
     else if (mood == MOOD_SAD)    m = "SAD";
     else if (mood == MOOD_NORMAL) m = "NORMAL";
     else if (mood == MOOD_HAPPY)  m = "HAPPY";
@@ -1287,6 +1499,18 @@ void drawStar(int x, int y) {
   display.drawLine(x, y - 2, x, y + 2, WHITE);
   display.drawPixel(x - 1, y - 1, WHITE);
   display.drawPixel(x + 1, y + 1, WHITE);
+}
+
+void drawRepeaterIcon(uint32_t now) {
+  display.fillRect(113, 0, 15, 10, BLACK);
+  if (!repeaterUp && ((now / 500) % 2)) return;
+  display.fillCircle(121, 8, 1, WHITE);
+  for (int r = 3; r <= 7; r += 2) {
+    for (int a = 230; a <= 310; a += 5) {
+      float rad = a * 0.0174533f;
+      display.drawPixel(121 + (int)roundf(cosf(rad) * r), 8 + (int)roundf(sinf(rad) * r), WHITE);
+    }
+  }
 }
 
 // ---------------------------- Standard faces --------------------------------
@@ -1412,32 +1636,27 @@ void drawFaceWake(uint32_t e) {
   }
 }
 
-// A hand drawn with a black halo so it stays visible when it overlaps the face.
-// 'tip' = x of the fingertips (the edge that hits the cheek).
 void drawHand(int tip, bool fromLeft) {
   int palmX = fromLeft ? tip - 26 : tip + 12;
   int fingX = fromLeft ? tip - 12 : tip;
   int thmX  = fromLeft ? tip - 22 : tip + 14;
-  display.fillRoundRect(palmX - 2, 12, 18, 34, 4, BLACK);          // halo
+  display.fillRoundRect(palmX - 2, 12, 18, 34, 4, BLACK);
   display.fillRect(fingX - 2, 20, 16, 26, BLACK);
-  display.fillRoundRect(palmX, 22, 14, 20, 3, WHITE);              // palm
-  for (int i = 0; i < 4; i++)                                      // four fingers
+  display.fillRoundRect(palmX, 22, 14, 20, 3, WHITE);
+  for (int i = 0; i < 4; i++)
     display.fillRoundRect(fingX, 22 + i * 5, 12, 4, 2, WHITE);
-  display.fillRoundRect(thmX, 14, 9, 7, 3, WHITE);                 // thumb
+  display.fillRoundRect(thmX, 14, 9, 7, 3, WHITE);
 }
 
-// SLAP: hand whips in from the touched side, WHACK impact burst, face is knocked
-// away and wobbles back with swirly dizzy eyes, wavy mouth, orbiting stars and a
-// red hand-print (drawn as stripes) on the slapped cheek.
 void drawFaceSlap(uint32_t e, uint32_t t, uint8_t side) {
-  const uint32_t HIT = 220;                    // impact moment (matches MEL_SLAP whoosh)
+  const uint32_t HIT = 220;
   bool fromLeft = (side == CH_LEFT);
-  int dir = fromLeft ? 1 : -1;                 // direction the face gets knocked
+  int dir = fromLeft ? 1 : -1;
 
-  if (e < HIT) {                               // ---- wind-up: surprised face, hand approaching
+  if (e < HIT) {
     display.fillRoundRect(26, 15, 22, 26, 6, WHITE);
     display.fillRoundRect(80, 15, 22, 26, 6, WHITE);
-    display.fillCircle(37 + (fromLeft ? -4 : 4), 28, 5, BLACK);    // pupils watch the hand
+    display.fillCircle(37 + (fromLeft ? -4 : 4), 28, 5, BLACK);
     display.fillCircle(91 + (fromLeft ? -4 : 4), 28, 5, BLACK);
     display.drawCircle(64, 52, 4, WHITE);
     int move = (int)((e * 30UL) / HIT);
@@ -1446,13 +1665,12 @@ void drawFaceSlap(uint32_t e, uint32_t t, uint8_t side) {
     return;
   }
 
-  uint32_t a = e - HIT;                        // time since impact
+  uint32_t a = e - HIT;
   float k = 1.0f - (a / 1600.0f);
   if (k < 0.0f) k = 0.0f;
   int dx = dir * (int)(14.0f * k) + (int)(sinf(a / 40.0f) * 5.0f * k);
   int dy = (int)(sinf(a / 55.0f) * 2.0f * k);
 
-  // dizzy swirl eyes
   for (int i = 0; i < 2; i++) {
     int cx = (i == 0 ? 37 : 91) + dx;
     int cy = 28 + dy;
@@ -1462,7 +1680,6 @@ void drawFaceSlap(uint32_t e, uint32_t t, uint8_t side) {
     display.drawLine(cx, cy, cx + (int)(cosf(ang) * 10), cy + (int)(sinf(ang) * 10), WHITE);
   }
 
-  // wobbly mouth
   int px = 0, py = 0;
   for (int x = -14; x <= 14; x += 2) {
     int y = 52 + dy + (int)(sinf((x + a / 35.0f) * 0.7f) * 3.0f);
@@ -1470,23 +1687,20 @@ void drawFaceSlap(uint32_t e, uint32_t t, uint8_t side) {
     px = x; py = y;
   }
 
-  // red hand-print on the slapped cheek (stripes, blinks while fading)
   if (a < 1500 || ((a / 120) % 2) == 0) {
     int x0 = (fromLeft ? 26 : 88) + dx;
     for (int i = 0; i < 4; i++) {
       display.drawLine(x0 + i * 3, 44 + dy, x0 + i * 3 + 1, 58 + dy, WHITE);
       if (i % 2) display.drawPixel(x0 + i * 3 - 1, 50 + dy, WHITE);
     }
-    display.drawLine(x0 - 3, 56 + dy, x0 + 11, 61 + dy, WHITE);    // palm base
+    display.drawLine(x0 - 3, 56 + dy, x0 + 11, 61 + dy, WHITE);
   }
 
-  // orbiting stars
   for (int s = 0; s < 3; s++) {
     float ang = (a / 150.0f) + s * 2.094f;
     drawStar(64 + dx + (int)(cosf(ang) * 28.0f), 6 + (int)(sinf(ang) * 4.0f));
   }
 
-  // hand recoils right after impact
   if (a < 360) {
     int tipHit = fromLeft ? 26 : 101;
     int back = (int)((a * 60UL) / 360UL);
@@ -1494,7 +1708,6 @@ void drawFaceSlap(uint32_t e, uint32_t t, uint8_t side) {
     drawHand(tip, fromLeft);
   }
 
-  // impact burst at the contact point
   if (a < 300) {
     int ix = fromLeft ? 30 : 97;
     int len = 6 + (int)(a / 25);
@@ -1505,7 +1718,6 @@ void drawFaceSlap(uint32_t e, uint32_t t, uint8_t side) {
     }
   }
 
-  // comic "WHACK!" label in the bottom corner opposite the hand
   if (a < 700 && ((a / 100) % 2) == 0) {
     display.setTextSize(1);
     display.setTextColor(WHITE);
@@ -1514,7 +1726,6 @@ void drawFaceSlap(uint32_t e, uint32_t t, uint8_t side) {
   }
 }
 
-// Both cheeks: super happy pinch - hearts + sparkles + blush
 void drawFacePinch(uint32_t t) {
   int b = (int)(sinf(t / 110.0f) * 3);
   display.fillCircle(64, 42 + b, 15, WHITE);
@@ -1532,6 +1743,49 @@ void drawFacePinch(uint32_t t) {
   }
   if ((t / 200) % 2 == 0) {
     display.drawLine(64, 2, 64, 8, WHITE);  display.drawLine(61, 5, 67, 5, WHITE);
+  }
+}
+
+void drawWarnIcon(int cx, int cy, uint16_t fg, uint16_t bg) {
+  display.fillTriangle(cx - 8, cy + 7, cx + 8, cy + 7, cx, cy - 8, fg);
+  display.fillRect(cx - 1, cy - 3, 2, 6, bg);
+  display.fillRect(cx - 1, cy + 4, 2, 2, bg);
+}
+
+void drawSosScreen(uint32_t now) {
+  uint32_t e = now - sosT0;
+  bool inv = ((e / 350) % 2) == 0;
+  uint16_t fg = inv ? BLACK : WHITE;
+  uint16_t bg = inv ? WHITE : BLACK;
+  if (inv) display.fillRect(0, 0, OLED_W, OLED_H, WHITE);
+
+  display.drawRect(0, 0, OLED_W, OLED_H, fg);
+  display.drawRect(1, 1, OLED_W - 2, OLED_H - 2, fg);
+
+  drawWarnIcon(14, 14, fg, bg);
+  drawWarnIcon(114, 14, fg, bg);
+
+  display.setTextColor(fg);
+  display.setTextSize(2);
+  display.setCursor(46, 6);
+  display.print(F("SOS"));
+
+  bool alt = ((e / 700) % 2) == 1;
+  const char* big = alt ? (sosSent ? "SOS SENT!" : "SENDING...") : "EMERGENCY!";
+  int w = strlen(big) * 12;
+  display.setTextSize(2);
+  display.setCursor((OLED_W - w) / 2, 26);
+  display.print(big);
+
+  display.setTextSize(1);
+  const char* st = sosSent ? "Alert sent to phone"
+                           : (Blynk.connected() ? "Sending alert..." : "Offline - retrying");
+  display.setCursor((OLED_W - strlen(st) * 6) / 2, 44);
+  display.print(st);
+
+  if (e >= SOS_ACK_GUARD_MS) {
+    display.setCursor((OLED_W - 13 * 6) / 2, 54);
+    display.print(F("Touch to stop"));
   }
 }
 
@@ -1616,13 +1870,11 @@ void drawSunRays(int cx, int cy, int r1, int r2, uint32_t t) {
   }
 }
 
-// Crescent moon: white disc minus an offset black disc. r = moon radius.
 void drawMoon(int cx, int cy, int r) {
   display.fillCircle(cx, cy, r, WHITE);
   display.fillCircle(cx + r / 2 + 1, cy - r / 3 - 1, r - 1, BLACK);
 }
 
-// Twinkling night stars around the moon
 void drawNightStars(int cx, int cy, uint32_t t) {
   if (((t / 600) % 2) == 0) drawStar(cx + 15, cy - 11);
   if (((t / 600) % 2) == 1) drawStar(cx + 17, cy + 3);
@@ -1633,7 +1885,7 @@ void drawNightStars(int cx, int cy, uint32_t t) {
 void drawWeatherIcon(WeatherIcon ic, int cx, int cy, uint32_t t, bool night) {
   switch (ic) {
     case WI_SUN:
-      if (night) {                                  // clear night sky: moon + stars
+      if (night) {
         drawMoon(cx, cy, 11);
         drawNightStars(cx, cy, t);
       } else {
@@ -1642,7 +1894,7 @@ void drawWeatherIcon(WeatherIcon ic, int cx, int cy, uint32_t t, bool night) {
       }
       break;
     case WI_PARTLY:
-      if (night) {                                  // moon peeking behind a cloud
+      if (night) {
         drawMoon(cx + 7, cy - 7, 8);
         if (((t / 700) % 2) == 0) display.drawPixel(cx - 8, cy - 14, WHITE);
       } else {
@@ -1677,7 +1929,7 @@ void drawWeatherIcon(WeatherIcon ic, int cx, int cy, uint32_t t, bool night) {
 }
 
 void drawWeather(uint32_t t) {
-  bool night = isNightNow();                        // NTP hours < 6 or >= 18
+  bool night = isNightNow();
 
   display.setTextColor(WHITE);
   display.setTextSize(1);
@@ -1733,8 +1985,6 @@ void drawMessage(uint32_t now) {
     display.print(F("Imam Buddy"));
   }
 
-  // scrolling text: moved down 10 px (y 22 -> 32); size-3 glyphs span y 32..55,
-  // so they still clear the bottom tagline at y 56.
   int span = OLED_W + msgPixelW;
   int x = OLED_W - (int)((((now - msgScrollT0) * 90UL) / 1000UL) % (uint32_t)span);
   display.setTextSize(3);
@@ -1750,6 +2000,7 @@ void drawEffect(uint32_t now) {
     case FX_WAKE:   drawFaceWake(e);             break;
     case FX_SLAP:   drawFaceSlap(e, now, fxSide); break;
     case FX_PINCH:  drawFacePinch(now);          break;
+    case FX_SOS:    drawSosScreen(now);          break;
     default: break;
   }
 }
@@ -1788,7 +2039,6 @@ void drawMenu(uint32_t now) {
   display.setTextWrap(false);
   display.setTextSize(1);
 
-  // header
   display.setCursor(0, 0);
   display.print(F("MENU"));
   display.setCursor(32, 0);
@@ -1799,17 +2049,16 @@ void drawMenu(uint32_t now) {
   display.print(b);
   display.drawFastHLine(0, 9, OLED_W, WHITE);
 
-  // item title (y 13)
   display.setCursor(0, 13);
   switch (menuIdx) {
-    case MI_ALARM: display.print(F("Alarm Setting")); break;
-    case MI_CITY:  display.print(F("Weather City"));  break;
-    case MI_SLEEP: display.print(F("Sleep Timeout")); break;
-    case MI_MOOD:  display.print(F("Mood Lock"));     break;
-    case MI_VOL:   display.print(F("Beep Volume"));   break;
+    case MI_ALARM:    display.print(F("Alarm Setting")); break;
+    case MI_CITY:     display.print(F("Weather City"));  break;
+    case MI_SLEEP:    display.print(F("Sleep Timeout")); break;
+    case MI_MOOD:     display.print(F("Mood Lock"));     break;
+    case MI_VOL:      display.print(F("Beep Volume"));   break;
+    case MI_REPEATER: display.print(F("WiFi Repeater")); break;
   }
 
-  // item body (y 24..52)
   switch (menuIdx) {
     case MI_ALARM: {
       bool on, pm; int h12, m;
@@ -1835,7 +2084,7 @@ void drawMenu(uint32_t now) {
       display.setCursor(4, 44);
       display.print(F("Alarm:"));
       printHL(on ? "ON " : "OFF", 46, 44, 1, menuEdit && menuField == 0);
-      if (menuEdit) {                                        // step indicator
+      if (menuEdit) {
         const char* st = (menuField == 0) ? "step ON/OFF" :
                          (menuField == 1) ? "step HOUR"   :
                          (menuField == 2) ? "step MINUTE" : "step AM/PM";
@@ -1883,9 +2132,23 @@ void drawMenu(uint32_t now) {
       display.print(b);
       break;
     }
+    case MI_REPEATER: {
+      bool v = menuEdit ? wRepeater : repeaterEnabled;
+      printCentered(v ? "ON" : "OFF", 26);
+      display.setTextSize(1);
+      const char* st;
+      if (menuEdit)                st = "SSID: Buddy";
+      else if (!repeaterEnabled)   st = "SSID: Buddy";
+      else if (repeaterUp)         st = "Active: Buddy";
+      else if (repeaterNoNapt)     st = "No NAPT in core";
+      else                         st = "Starting...";
+      display.setCursor((OLED_W - strlen(st) * 6) / 2, 46);
+      display.print(st);
+      if (menuEdit) drawArrows();
+      break;
+    }
   }
 
-  // bottom hint line (y 56) - never overlaps title or body
   display.setTextSize(1);
   display.setTextColor(WHITE);
   const char* hint;
@@ -1901,12 +2164,11 @@ void drawMenu(uint32_t now) {
 
 // ============================================================================
 //  DISPLAY SERVICE
-//  Priority: alarm > menu > sleep > effect > message > interaction > standby
 // ============================================================================
 void serviceDisplay(uint32_t now) {
   if (sleeping) {
     if (now - sleepStartMs >= sleepDispOffDelay) {
-      setDisplayPower(false);                // display.ssd1306_command(SSD1306_DISPLAYOFF)
+      setDisplayPower(false);
       return;
     }
   } else {
@@ -1918,7 +2180,8 @@ void serviceDisplay(uint32_t now) {
   lastFrameMs = now;
 
   DispMode mode;
-  if (alarmTriggered)                                           mode = DM_ALARM;
+  if (sosActive)                                                mode = DM_FX;
+  else if (alarmTriggered)                                      mode = DM_ALARM;
   else if (menuActive)                                          mode = DM_MENU;
   else if (sleeping)                                            mode = DM_SLEEP;
   else if (fxMode != FX_NONE)                                   mode = DM_FX;
@@ -1951,6 +2214,9 @@ void serviceDisplay(uint32_t now) {
       break;
     }
   }
+
+  if (repeaterEnabled && (mode == DM_STANDBY || mode == DM_INTERACT)) drawRepeaterIcon(now);
+
   display.display();
 }
 
@@ -1961,7 +2227,7 @@ void setup() {
   Serial.begin(115200);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
-  timer1_attachInterrupt(bzISR);             // buzzer square-wave generator (enabled on demand)
+  timer1_attachInterrupt(bzISR);
 
   loadSettings();
 
@@ -1984,7 +2250,7 @@ void setup() {
 
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
-  WiFi.setSleepMode(WIFI_LIGHT_SLEEP);      // modem light sleep; Blynk/NTP stay reachable
+  WiFi.setSleepMode(WIFI_LIGHT_SLEEP);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
@@ -1996,16 +2262,19 @@ void setup() {
   lastTouchMs    = now;
   lastActivityMs = now;
   standbyT0      = now;
-  weatherNextFetchMs = now + 10000;         // first live weather ~10 s after boot
+  repeaterNextMs = now;
+  weatherNextFetchMs = now + 10000;
 }
 
 void loop() {
   uint32_t now = millis();
   serviceNetwork(now);
+  serviceRepeater(now);
   serviceTouch(now);
   serviceGestures(now);
   serviceMood(now);
   serviceMessage(now);
+  serviceSos(now);
   serviceAlarm(now);
   serviceAutoSleep(now);
   serviceWeatherSync(now);
@@ -2015,8 +2284,5 @@ void loop() {
   serviceSettings(now);
   serviceDisplay(now);
 
-  // Idle while asleep with OLED off: lets the CPU/modem enter light sleep between polls.
-  // Wi-Fi, NTP and Blynk keep running in serviceNetwork() above, so the pet stays online.
-  // (Buzzer Timer1 is disabled whenever no tone plays, so it never wakes the CPU needlessly.)
-  if (sleeping && !displayIsOn) delay(20);
+  if (sleeping && !displayIsOn) delay(repeaterUp ? 1 : 20);
 }
