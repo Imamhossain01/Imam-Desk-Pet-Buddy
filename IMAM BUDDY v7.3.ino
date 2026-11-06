@@ -60,9 +60,9 @@
  */
  
 
-#define BLYNK_TEMPLATE_ID    "TMPL6gBnqXvGj"
+#define BLYNK_TEMPLATE_ID    "****************"
 #define BLYNK_TEMPLATE_NAME  "Imam Buddy"
-#define BLYNK_AUTH_TOKEN     "PqAVyR_e80ZggsUyAUalvXLkNRq3N5qT"
+#define BLYNK_AUTH_TOKEN     "****************"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
@@ -94,8 +94,8 @@ extern "C" void dhcps_set_dns(uint8_t num, ip_addr_t *dnsserver) __attribute__((
 #endif
 
 // ----------------------------- User Settings --------------------------------
-const char* WIFI_SSID = "IMAM";
-const char* WIFI_PASS = "imam121#";
+const char* WIFI_SSID = "****************";
+const char* WIFI_PASS = "****************";
 
 #define AP_SSID          "Buddy"      // repeater network name (password = WIFI_PASS)
 #define AP_MAX_CLIENTS   4
