@@ -1,5 +1,13 @@
 /*
  * ============================================================================
+ *  IMAM BUDDY v7.3 - SOS Panic + WiFi Repeater + Status Icon (ESP8266)
+ * ============================================================================
+ *  Board: "NodeMCU 1.0 (ESP-12E Module)"  (ESP8266 core 3.x)
+ *  Tools -> lwIP Variant: "v2 Lower Memory" (default) or "v2 Higher Bandwidth"
+ * ============================================================================
+ */
+/*
+ * ============================================================================
  *  IMAM BUDDY v5.0 - Multi-Touch + Settings Menu + Auto Sleep (ESP8266)
  * ============================================================================
  *  Libraries (Library Manager): Blynk, Adafruit GFX, Adafruit SSD1306, NTPClient
@@ -50,14 +58,7 @@
  *  Do NOT touch the wires while the pet boots (touch calibration).
  * ============================================================================
  */
- */*
- * ============================================================================
- *  IMAM BUDDY v7.3 - SOS Panic + WiFi Repeater + Status Icon (ESP8266)
- * ============================================================================
- *  Board: "NodeMCU 1.0 (ESP-12E Module)"  (ESP8266 core 3.x)
- *  Tools -> lwIP Variant: "v2 Lower Memory" (default) or "v2 Higher Bandwidth"
- * ============================================================================
- */
+ 
 
 #define BLYNK_TEMPLATE_ID    "TMPL6gBnqXvGj"
 #define BLYNK_TEMPLATE_NAME  "Imam Buddy"
